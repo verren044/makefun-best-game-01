@@ -9,6 +9,12 @@ offline in a desktop browser from static files. You are the last warden of a
 beacon; hold the light through 10 waves of shadow creatures and slay the
 Gloomlord on wave 10 to win.
 
+**Hold the light:** your lantern and the beacon each carry a pool of light.
+Shadows standing outside it are armoured — they take 40% less damage and
+move faster — so the fight is about position: kite the horde into the glow,
+spend a flare to surge your light wide, or take the Lantern's Reach blessing
+to widen it for good.
+
 ## Play
 
 ```sh
@@ -20,10 +26,11 @@ node serve.ts            # serves game/ at http://localhost:8080
 - P / ESC — pause · M — mute · R — restart after game over / victory
 
 Clear a wave, then pick 1 of 3 upgrade cards (keys 1–3 or click). Enemies:
-wisps, motes, spitters, brutes, splitters, and the Gloomlord boss every 5th
-wave (radial bursts, summons, telegraphed charges). Combo multiplier grows
-with kills; hearts, ember shards and flare charges drop from the fallen.
-Best score persists in localStorage.
+wisps, motes, spitters, brutes, splitters, blink-teleporting stalkers, and
+the Gloomlord boss every 5th wave (radial bursts, summons, telegraphed
+charges, enraged below half health). Combo multiplier grows with kills;
+hearts, ember shards and flare charges drop from the fallen. Best score
+persists in localStorage.
 
 ## Files
 
