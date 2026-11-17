@@ -50,6 +50,11 @@ export const UPGRADES = [
     max: 2, apply: (p) => { p.magnetRadius *= 2; },
   },
   {
+    id: 'lantern-reach', name: "Lantern's Reach", icon: '◉',
+    desc: '+60 lantern light. More of the arena burns for you.',
+    max: 3, apply: (p) => { p.lightRadius += 60; },
+  },
+  {
     id: 'adrenaline', name: 'Adrenaline', icon: '!',
     desc: 'Kills briefly speed up your fire by 15% (stacks to 3).',
     max: 1, apply: (p) => { p.adrenaline = true; },

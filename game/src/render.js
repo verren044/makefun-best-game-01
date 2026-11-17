@@ -1,6 +1,6 @@
 // All canvas drawing: the arena, every entity, the HUD, and every screen
 // (title, upgrade cards, pause, game over, victory). The world never draws.
-import { VIEW_W, VIEW_H, ARENA, COLORS, FINAL_WAVE, BOSS_WAVE } from './config.js';
+import { VIEW_W, VIEW_H, ARENA, COLORS, FINAL_WAVE, BOSS_WAVE, BEACON_LIGHT_RADIUS } from './config.js';
 import { PHASE } from './world.js';
 
 const TITLE_FONT = 'Georgia, "Times New Roman", serif';
@@ -89,14 +89,42 @@ function drawAttractWorld(ctx, world) {
   drawLanternLight(ctx, world);
 }
 
+// The dark beyond the light: the arena is dimmed everywhere except inside
+// the player's lantern pool and the beacon's pool, so the light the rules
+// use is the light the player sees. A gold ring marks its edge.
+let lightCanvas = null;
+
+function punchLight(lctx, x, y, radius) {
+  const g = lctx.createRadialGradient(x, y, radius * 0.55, x, y, radius);
+  g.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  lctx.fillStyle = g;
+  lctx.beginPath();
+  lctx.arc(x, y, radius, 0, Math.PI * 2);
+  lctx.fill();
+}
+
 function drawLanternLight(ctx, world) {
+  if (!lightCanvas) {
+    lightCanvas = document.createElement('canvas');
+    lightCanvas.width = VIEW_W;
+    lightCanvas.height = VIEW_H;
+  }
+  const lctx = lightCanvas.getContext('2d');
+  lctx.clearRect(0, 0, VIEW_W, VIEW_H);
+  lctx.fillStyle = 'rgba(5, 6, 16, 0.55)';
+  lctx.fillRect(ARENA.x, ARENA.y, ARENA.w, ARENA.h);
+  lctx.globalCompositeOperation = 'destination-out';
   const p = world.player;
-  const g = ctx.createRadialGradient(p.x, p.y, 60, p.x, p.y, 460);
-  g.addColorStop(0, 'rgba(5, 6, 16, 0)');
-  g.addColorStop(0.75, 'rgba(5, 6, 16, 0.18)');
-  g.addColorStop(1, 'rgba(5, 6, 16, 0.55)');
-  ctx.fillStyle = g;
-  ctx.fillRect(ARENA.x, ARENA.y, ARENA.w, ARENA.h);
+  punchLight(lctx, p.x, p.y, world.lightRadiusNow);
+  punchLight(lctx, VIEW_W / 2, ARENA.y + ARENA.h / 2, BEACON_LIGHT_RADIUS);
+  lctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(lightCanvas, 0, 0);
+  ctx.strokeStyle = 'rgba(255, 211, 122, 0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, world.lightRadiusNow, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 function drawPlayer(ctx, world) {
@@ -215,6 +243,24 @@ function drawEnemies(ctx, world) {
         ctx.fill();
       }
       drawEyes(ctx, e, -8, -8, 9, -7, 3);
+    } else if (e.kind === 'stalker') {
+      // A crescent that blinks: while it telegraphs, its landing spot glows.
+      if (e.charging) {
+        ctx.strokeStyle = 'rgba(255, 157, 92, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.blinkX - e.x, e.blinkY - e.y, 18, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0b0e1a';
+      ctx.beginPath();
+      ctx.arc(4, 0, e.radius * 0.62, 0, Math.PI * 2);
+      ctx.fill();
+      drawEyes(ctx, e, -5, -4, 5, -4);
     } else if (e.kind === 'boss') {
       // The Gloomlord: a huge crowned shade, glowing cracks when enraged.
       const enraged = e.hp / e.maxHp < 0.4;
@@ -256,6 +302,14 @@ function drawEnemies(ctx, world) {
         ctx.lineTo(Math.cos(e.angle) * 120, Math.sin(e.angle) * 120);
         ctx.stroke();
       }
+    }
+    // Armoured by the dark: a dull ring marks enemies the light has not reached.
+    if (world.isShadowed(e)) {
+      ctx.strokeStyle = '#454a6b';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius + 5, 0, Math.PI * 2);
+      ctx.stroke();
     }
     // Health bar for anything hurt (not for motes: too small to read).
     if (e.kind !== 'mote' && e.hp < e.maxHp) {
@@ -473,6 +527,7 @@ function drawTitle(ctx, world) {
     'WASD / Arrows — move      Mouse — aim      Hold Click / Space — fire embers',
     'SHIFT — dash      E / Right-click — flare burst      P — pause      M — mute',
     'Clear a wave, then pick 1 of 3 upgrades. Hearts and flares drop from the fallen.',
+    'Shadows outside your lantern light are armoured — fight inside the glow.',
   ];
   lines.forEach((line, i) => ctx.fillText(line, VIEW_W / 2, 372 + i * 26));
   if (world.best.score > 0) {

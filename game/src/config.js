@@ -47,13 +47,23 @@ export const PLAYER = {
   invulnTime: 0.9,
 };
 
-// Enemy kinds. hp/speed scale with wave in enemies.js; these are base values.
+// The lantern's light is the warden's only safe ground: enemies standing
+// outside it are shadowed — armoured and quicker. The beacon at the
+// arena's heart carries its own smaller pool of light.
+export const LIGHT_BASE_RADIUS = 340; // around the player
+export const BEACON_LIGHT_RADIUS = 230; // around the beacon
+export const FLARE_LIGHT_RADIUS = 580; // while a flare surge burns
+export const FLARE_LIGHT_TIME = 4.0;
+export const SHADOW_DAMAGE_TAKEN = 0.6; // a shadowed enemy takes 60% damage
+export const SHADOW_SPEED = 1.12; // and moves 12% faster
+export const LIGHT_UPGRADE_RADIUS = 60; // per Lantern's Reach level
 export const ENEMIES = {
   wisp: { radius: 15, hp: 18, speed: 95, damage: 10, score: 50, color: '#8f7bff', eye: '#e6dcff' },
   mote: { radius: 9, hp: 8, speed: 165, damage: 6, score: 30, color: '#e08cff', eye: '#fff0ff' },
   spitter: { radius: 17, hp: 30, speed: 62, damage: 8, score: 90, color: '#b06cff', eye: '#ffe9a8' },
   brute: { radius: 30, hp: 120, speed: 48, damage: 22, score: 200, color: '#c94f7c', eye: '#ffd0dd' },
   splitter: { radius: 20, hp: 36, speed: 78, damage: 12, score: 120, color: '#7a5cff', eye: '#d8ccff' },
+  stalker: { radius: 14, hp: 26, speed: 120, damage: 14, score: 150, color: '#ff9d5c', eye: '#fff3c4' },
   boss: { radius: 52, hp: 900, speed: 55, damage: 30, score: 2000, color: '#4a2a8f', eye: '#ffb347' },
 };
 
@@ -71,6 +81,7 @@ export function waveBudget(wave) {
     mote: wave >= 2 ? 3 + wave : 0,
     spitter: wave >= 3 ? 1 + Math.floor(wave / 2) : 0,
     splitter: wave >= 4 ? 1 + Math.floor((wave - 2) / 2) : 0,
+    stalker: wave >= 3 ? 1 + Math.floor(wave / 3) : 0,
     brute: wave >= 4 ? Math.floor((wave - 1) / 2) : 0,
   };
   if (wave % BOSS_WAVE === 0) budget.boss = 1;

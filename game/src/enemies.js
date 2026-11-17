@@ -1,6 +1,6 @@
 // Enemy kinds, the boss, and how each one moves and fights. The world owns
 // positions and health; this module owns per-kind behaviour.
-import { ENEMIES, ARENA } from './config.js';
+import { ENEMIES, ARENA, SHADOW_SPEED } from './config.js';
 import { rand } from './random.js';
 
 let nextId = 1;
@@ -85,6 +85,8 @@ export function updateEnemy(e, world, dt) {
   const events = [];
   e.hitFlash = Math.max(0, e.hitFlash - dt);
   e.wobble += dt * 3;
+  // Shadows outside the lantern's light move faster.
+  const effSpeed = e.speed * (world.isShadowed(e) ? SHADOW_SPEED : 1);
 
   if (e.kind === 'wisp') {
     // Drifts at the player with a sinusoidal wobble so the swarm never moves
@@ -95,11 +97,11 @@ export function updateEnemy(e, world, dt) {
     const d = Math.hypot(dx, dy) || 1;
     const px = -dy / d;
     const py = dx / d;
-    e.x += ((dx / d) + px * wob) * e.speed * dt;
-    e.y += ((dy / d) + py * wob) * e.speed * dt;
+    e.x += ((dx / d) + px * wob) * effSpeed * dt;
+    e.y += ((dy / d) + py * wob) * effSpeed * dt;
     e.angle = Math.atan2(dy, dx);
   } else if (e.kind === 'mote') {
-    steerToward(e, p.x, p.y, dt, e.speed);
+    steerToward(e, p.x, p.y, dt, effSpeed);
   } else if (e.kind === 'spitter') {
     // Keeps a firing distance: closes in when far, backs off when crowded.
     const dx = p.x - e.x;
@@ -107,8 +109,8 @@ export function updateEnemy(e, world, dt) {
     const d = Math.hypot(dx, dy) || 1;
     const want = 300;
     const dir = d > want + 40 ? 1 : d < want - 60 ? -1 : 0;
-    e.x += (dx / d) * e.speed * dir * dt;
-    e.y += (dy / d) * e.speed * dir * dt;
+    e.x += (dx / d) * effSpeed * dir * dt;
+    e.y += (dy / d) * effSpeed * dir * dt;
     e.angle = Math.atan2(dy, dx);
     e.shootTimer -= dt;
     if (e.shootTimer <= 0 && d < 560) {
@@ -116,9 +118,32 @@ export function updateEnemy(e, world, dt) {
       events.push({ shoot: { x: e.x, y: e.y, angle: e.angle, speed: 240 } });
     }
   } else if (e.kind === 'brute') {
-    steerToward(e, p.x, p.y, dt, e.speed);
+    steerToward(e, p.x, p.y, dt, effSpeed);
   } else if (e.kind === 'splitter') {
-    steerToward(e, p.x, p.y, dt, e.speed * (1 + 0.15 * Math.sin(e.wobble)));
+    steerToward(e, p.x, p.y, dt, effSpeed * (1 + 0.15 * Math.sin(e.wobble)));
+  } else if (e.kind === 'stalker') {
+    // Blinks at the player: telegraphs its landing spot, then vanishes there.
+    if (e.charging) {
+      e.chargeTimer -= dt;
+      if (e.chargeTimer <= 0) {
+        e.charging = false;
+        e.x = e.blinkX;
+        e.y = e.blinkY;
+        e.shootTimer = rand(world.rng, 2.2, 3.6);
+      }
+    } else {
+      steerToward(e, p.x, p.y, dt, effSpeed);
+      e.shootTimer -= dt;
+      const d = Math.hypot(p.x - e.x, p.y - e.y);
+      if (e.shootTimer <= 0 && d > 180 && d < 620) {
+        e.charging = true;
+        e.chargeTimer = 0.55;
+        // Land just short of the player, so the blink is a threat, not a hit.
+        const a = Math.atan2(p.y - e.y, p.x - e.x);
+        e.blinkX = p.x - Math.cos(a) * 70;
+        e.blinkY = p.y - Math.sin(a) * 70;
+      }
+    }
   } else if (e.kind === 'boss') {
     updateBoss(e, world, dt, events);
   }
@@ -130,8 +155,8 @@ export function updateEnemy(e, world, dt) {
 function updateBoss(e, world, dt, events) {
   const p = world.player;
   const hpFrac = e.hp / e.maxHp;
-  const enraged = hpFrac < 0.4;
-  const speed = e.speed * (enraged ? 1.6 : 1);
+  const enraged = hpFrac < 0.5;
+  const speed = e.speed * (enraged ? 1.6 : 1) * (world.isShadowed(e) ? SHADOW_SPEED : 1);
   e.burstTimer -= dt;
   e.chargeTimer -= dt;
   e.spawnTimer -= dt;

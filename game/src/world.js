@@ -2,7 +2,9 @@
 // and pickups. Rendering lives in render.js, enemy behaviour in enemies.js.
 import {
   VIEW_W, VIEW_H, ARENA, PLAYER, STEP, BOSS_WAVE, FINAL_WAVE,
-  PICKUP_HEAL, COMBO_WINDOW, COMBO_STEP, waveBudget, waveSpawnInterval,
+  PICKUP_HEAL, COMBO_WINDOW, COMBO_STEP, LIGHT_BASE_RADIUS,
+  BEACON_LIGHT_RADIUS, FLARE_LIGHT_RADIUS, FLARE_LIGHT_TIME,
+  SHADOW_DAMAGE_TAKEN, waveBudget, waveSpawnInterval,
 } from './config.js';
 import { mulberry32, rand, chance, pick } from './random.js';
 import { createEnemy, updateEnemy, spawnPoint, splitChildren } from './enemies.js';
@@ -49,6 +51,7 @@ function freshPlayer() {
     multishot: 1, pierce: 0,
     flares: PLAYER.flareMax, flareMax: PLAYER.flareMax,
     flareDamage: PLAYER.flareDamage, flareRadius: PLAYER.flareRadius,
+    lightRadius: LIGHT_BASE_RADIUS, flareLightTimer: 0,
     magnetRadius: 90, adrenaline: false,
     fireTimer: 0, dashTimer: 0, dashCooldown: 0, dashX: 0, dashY: 1,
     invuln: 0, aimAngle: -Math.PI / 2,
@@ -99,6 +102,26 @@ export class World {
     this.beginWave(1);
   }
 
+  // The lantern's light, and the beacon's: a point is lit if it falls
+  // inside either pool. Shadows outside the light are armoured.
+  get lightRadiusNow() {
+    return this.player.flareLightTimer > 0 ? FLARE_LIGHT_RADIUS : this.player.lightRadius;
+  }
+
+  inLight(x, y) {
+    const p = this.player;
+    const dx = x - p.x;
+    const dy = y - p.y;
+    if (dx * dx + dy * dy < this.lightRadiusNow * this.lightRadiusNow) return true;
+    const bx = x - VIEW_W / 2;
+    const by = y - (ARENA.y + ARENA.h / 2);
+    return bx * bx + by * by < BEACON_LIGHT_RADIUS * BEACON_LIGHT_RADIUS;
+  }
+
+  isShadowed(e) {
+    return !this.inLight(e.x, e.y);
+  }
+
   beginWave(n) {
     this.wave = n;
     const budget = waveBudget(n);
@@ -141,6 +164,7 @@ export class World {
   stepPlay(dt, input) {
     const p = this.player;
     p.invuln = Math.max(0, p.invuln - dt);
+    p.flareLightTimer = Math.max(0, p.flareLightTimer - dt);
     p.dashCooldown = Math.max(0, p.dashCooldown - dt);
     p.fireTimer -= dt;
     if (p.adrenalineTimer > 0) {
@@ -250,6 +274,9 @@ export class World {
   useFlare() {
     const p = this.player;
     p.flares -= 1;
+    // A flare is a burst of light: it surges the lantern's radius as well
+    // as burning and pushing the horde back.
+    p.flareLightTimer = FLARE_LIGHT_TIME;
     this.sound.flare();
     this.fx.ring(p.x, p.y, '#ffd97a', 30, 420);
     this.fx.shake(7, 0.3);
@@ -261,7 +288,7 @@ export class World {
         const push = 260 * (1 - d / (p.flareRadius + e.radius));
         e.x += (dx / (d || 1)) * push * 0.12;
         e.y += (dy / (d || 1)) * push * 0.12;
-        this.damageEnemy(e, p.flareDamage, true);
+        this.damageEnemy(e, p.flareDamage, true, true);
       }
     }
     this.enemies = this.enemies.filter((e) => !e.dead);
@@ -377,10 +404,14 @@ export class World {
     }
   }
 
-  damageEnemy(e, amount, silent) {
-    e.hp -= amount;
+  damageEnemy(e, amount, silent, ignoreShadow = false) {
+    // Shadowed enemies — standing outside the lantern's light and the
+    // beacon's — are armoured and take less damage. Flare light ignores it.
+    const dealt = !ignoreShadow && this.isShadowed(e)
+      ? Math.max(1, Math.round(amount * SHADOW_DAMAGE_TAKEN)) : amount;
+    e.hp -= dealt;
     e.hitFlash = 0.12;
-    this.stats.damage += amount;
+    this.stats.damage += dealt;
     if (!silent) this.sound.hit();
     if (e.hp <= 0 && !e.dead) this.killEnemy(e);
   }

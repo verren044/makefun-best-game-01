@@ -13,6 +13,8 @@ export class FakeInput {
     this._move = { x: 0, y: 0 };
     this._fire = false;
     this._press = new Set();
+    // Last seen position of each enemy, for leading the target.
+    this._track = new Map();
   }
 
   moveVector() { return this._move; }
@@ -35,13 +37,46 @@ function dist(ax, ay, bx, by) {
  */
 export function autopilotStep(world, input, skill = 0.8) {
   const p = world.player;
-  let target = null;
-  let td = Infinity;
+  // Track every enemy's position each step, so the velocity estimate for
+  // the target is always one step old. Tracking only the current target
+  // goes stale the moment the pilot switches targets, and stale velocity
+  // is worse than none.
+  const seen = new Set();
   for (const e of world.enemies) {
-    const d = dist(p.x, p.y, e.x, e.y);
-    const weight = e.kind === 'boss' ? d * 0.6 : d;
-    if (weight < td) { td = weight; target = e; }
+    const prev = input._track.get(e.id);
+    if (prev) {
+      const dt = world.time - prev.t;
+      if (dt > 0) {
+        prev.vx = (e.x - prev.x) / dt;
+        prev.vy = (e.y - prev.y) / dt;
+      }
+      prev.x = e.x;
+      prev.y = e.y;
+      prev.t = world.time;
+    } else {
+      input._track.set(e.id, { x: e.x, y: e.y, t: world.time, vx: 0, vy: 0 });
+    }
+    seen.add(e.id);
   }
+  for (const id of [...input._track.keys()]) if (!seen.has(id)) input._track.delete(id);
+
+  // Stick to a target until it dies or leaves range: re-picking the nearest
+  // enemy every step sprays bullets at a rotating cast, and every bullet
+  // in flight chases a target the pilot has already abandoned.
+  let target = null;
+  const prevTarget = input._targetId !== undefined
+    ? world.enemies.find((e) => e.id === input._targetId) : null;
+  if (prevTarget && dist(p.x, p.y, prevTarget.x, prevTarget.y) < 450) {
+    target = prevTarget;
+  } else {
+    let td = Infinity;
+    for (const e of world.enemies) {
+      const d = dist(p.x, p.y, e.x, e.y);
+      const weight = e.kind === 'boss' ? d * 0.6 : d;
+      if (weight < td) { td = weight; target = e; }
+    }
+  }
+  input._targetId = target ? target.id : undefined;
 
   let mx = 0;
   let my = 0;
@@ -50,6 +85,15 @@ export function autopilotStep(world, input, skill = 0.8) {
   if (target) {
     aimX = target.x;
     aimY = target.y;
+    // Lead the target: aim where it will be when the ember arrives, from
+    // its velocity over the last step. A pilot that shoots at where a
+    // shadow was never hits a moving one.
+    const prev = input._track.get(target.id);
+    if (prev && (prev.vx || prev.vy)) {
+      const flight = dist(p.x, p.y, target.x, target.y) / p.bulletSpeed;
+      aimX = target.x + prev.vx * flight;
+      aimY = target.y + prev.vy * flight;
+    }
     const d = dist(p.x, p.y, target.x, target.y);
     // Flee anything inside the danger radius.
     let threat = null;
@@ -106,7 +150,11 @@ export function autopilotStep(world, input, skill = 0.8) {
   input._move = { x: mx, y: my };
   input.mouse.x = aimX;
   input.mouse.y = aimY;
-  input._fire = target !== null;
+  // Fire only in close: at long range the wobble defeats the lead and the
+  // embers spray past. Close in, then shoot — a pilot that fires at 350px
+  // lands one bullet in ten, but one that waits for 220px never kills
+  // fast enough to survive. 300px is the working band.
+  input._fire = target !== null && dist(p.x, p.y, target.x, target.y) < 300;
 }
 
 // Run the world forward for `seconds` of fixed steps under the autopilot,
@@ -138,8 +186,10 @@ function gatherCrowd(world, input, seconds, minEnemies, skill) {
     input._fire = false;
     world.step(STEP, input);
   }
-  // A short burst of real fire so the captured frame has embers in flight.
-  for (let i = 0; i < 0.6 / STEP; i += 1) {
+  // A burst of real fire so the captured frame catches an active firefight,
+  // embers in flight — short enough that the pilot has not already cleared
+  // the crowd it gathered.
+  for (let i = 0; i < 1.5 / STEP; i += 1) {
     if (world.phase !== PHASE.PLAY) break;
     autopilotStep(world, input, skill);
     world.step(STEP, input);
@@ -164,13 +214,14 @@ export function stageShot(name, world) {
   const input = new FakeInput();
   if (name === 'title' || name === 'start') {
     world.reset();
-    world.beginWave(1);
-    // Attract mode: the game plays itself behind the title.
-    for (let i = 0; i < 6 / STEP; i += 1) {
+    world.beginWave(2);
+    // Attract mode: the game plays itself behind the title, a wave in so
+    // the backdrop shows a real fight, not an empty arena.
+    for (let i = 0; i < 10 / STEP; i += 1) {
       autopilotStep(world, input, 0.7);
       world.stepPlay(STEP, input);
       input.endStep();
-      if (world.enemies.length === 0 && world.spawnQueue.length === 0) world.beginWave(1);
+      if (world.enemies.length === 0 && world.spawnQueue.length === 0) world.beginWave(2);
     }
     return { screen: PHASE.TITLE, best: 0 };
   }
@@ -182,26 +233,29 @@ export function stageShot(name, world) {
     blessPlayer(world, 300, 12, 1);
     world.player.fireInterval = 0.16;
     world.beginWave(5);
-    gatherCrowd(world, input, 12, 8, 0.85);
+    gatherCrowd(world, input, 12, 10, 0.85);
     return { screen: PHASE.PLAY, best: world.score };
   }
 
   if (name === 'victory') {
-    world.startRun();
-    blessPlayer(world, 500, 42, 3);
-    world.beginWave(10);
-    // Fight the final boss until the real wave-clear triggers victory.
-    let won = false;
-    for (let i = 0; i < 150 / STEP && !won; i += 1) {
-      if (world.phase === PHASE.VICTORY) { won = true; break; }
-      if (world.phase === PHASE.OVER) break;
-      if (world.phase === PHASE.UPGRADE) { world.applyUpgrade(world.upgradeChoices[0].id); continue; }
-      autopilotStep(world, input, 0.95);
-      world.step(STEP, input);
+    // A real full run, waves 1 to 10, so the victory screen's stats are a
+    // run the game actually played: a real time, a real accuracy.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      world.startRun();
+      blessPlayer(world, 300 + attempt * 100, 25 + attempt * 10, 2);
+      let won = false;
+      for (let i = 0; i < 600 / STEP && !won; i += 1) {
+        if (world.phase === PHASE.VICTORY) { won = true; break; }
+        if (world.phase === PHASE.OVER) break;
+        if (world.phase === PHASE.UPGRADE) { world.applyUpgrade(world.upgradeChoices[0].id); continue; }
+        autopilotStep(world, input, 0.95);
+        world.step(STEP, input);
+      }
+      if (won) return { screen: PHASE.VICTORY, best: world.score };
     }
-    if (!won && world.boss && !world.boss.dead) {
-      // The pilot stalled: finish the boss through the real damage path so
-      // the victory screen is still the game's own transition.
+    // The pilot stalled: finish the boss through the real damage path so
+    // the victory screen is still the game's own transition.
+    if (world.boss && !world.boss.dead) {
       world.damageEnemy(world.boss, 999999, true);
       for (let i = 0; i < 30; i += 1) world.step(STEP, input);
     }
@@ -220,8 +274,9 @@ export function stageShot(name, world) {
     return { screen: PHASE.OVER, best: world.score };
   }
 
-  // play (default): a real mid-game frame, wave 1 into wave 2, then let the
-  // horde gather so the capture shows a fight, not an empty arena.
+  // play (default): a real mid-game frame — fight through to wave 4, where
+  // spitters, splitters, brutes and stalkers all field, then let the horde
+  // gather so the capture shows a fight, not an empty arena.
   world.startRun();
   playForward(world, input, 26, 0.85);
   if (world.phase === PHASE.OVER) {
@@ -230,6 +285,15 @@ export function stageShot(name, world) {
     blessPlayer(world, 400, 20, 2);
     playForward(world, input, 26, 0.9);
   }
-  gatherCrowd(world, input, 12, 6, 0.85);
+  // Push on to wave 4 if the pilot is still early, so every kind is in play.
+  let guard = 0;
+  while (world.wave < 4 && guard < 120 / STEP) {
+    if (world.phase === PHASE.UPGRADE) { world.applyUpgrade(world.upgradeChoices[0].id); continue; }
+    if (world.phase !== PHASE.PLAY) break;
+    autopilotStep(world, input, 0.85);
+    world.step(STEP, input);
+    guard += 1;
+  }
+  gatherCrowd(world, input, 12, 14, 0.85);
   return { screen: PHASE.PLAY, best: world.score };
 }
